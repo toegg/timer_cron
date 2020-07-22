@@ -5,6 +5,8 @@ import(
 	"time"
 	"strconv"
 	"strings"
+	"log"
+	"os"
 )
 
 //时间类型
@@ -53,12 +55,15 @@ var EntryList []Entry
 
 var exit = make(chan int)
 
-//过期时间,零点加上2s
+//过期时间,整点加上2s
 var time_out = 60 + 2
+
+var Trace *log.Logger
 
 //初始化
 func init(){
 	parse_file()	
+	Trace = log.New(os.Stdout, "Trace: ", log.Ldate|log.Ltime)
 }
 
 //解析规则列表
@@ -68,7 +73,7 @@ func parse_file() {
 
 	add_entrys("0-10/2", "*", "*", "*", "*", func(){fmt.Println("every 0-10 minute 2 step handler")}) //第0-10分中，每2分钟执行
 
-	add_entrys("50-55", "*", "*", "*", "*", func(){fmt.Println("every 50 - 55 minute handler")}) //第50-55分执行
+	add_entrys("15-20", "*", "*", "*", "*", func(){fmt.Println("every 15 - 20 minute handler")}) //第50-55分执行
 
     add_entrys("*/1", "*", "*", "*", "*", func(){fmt.Println("one minute handler")}) //每分钟执行
 
@@ -93,7 +98,6 @@ func start_cron(cron *time.Ticker){
 	for {
 		select {
 			case <-cron.C:
-				fmt.Println("timer_do")
 				timer_do(EntryList)
 		}
 	}	
@@ -108,65 +112,60 @@ func start_cron(cron *time.Ticker){
 //func function函数
 func add_entrys(m string, h string, d string, mn string, w string, fun func()) {
 	entry := Entry{
-		M:parse_entry(1, m),
-		H:parse_entry(2, h),
-		D:parse_entry(3, d),
-		MN:parse_entry(4, mn),
-		W:parse_entry(5, w),
+		M:parse_field(m, 0, 59),
+		H:parse_field(h, 0, 23),
+		D:parse_field(d, 1, 31),
+		MN:parse_field(mn, 1, 12),
+		W:parse_field(w, 1, 7),
 		DoFunc:fun,
 	}
 	EntryList = append(EntryList, entry)
 }
 
-func parse_entry(pos int, val string) Field{
-	if pos == 1 {
-		return parse_field(val, 0, 59)
-	}
-	if pos == 2 {
-		return parse_field(val, 0, 23)
-	}
-	if pos == 3 {
-		return parse_field(val, 1, 31)
-	}
-	if pos == 4 {
-		return parse_field(val, 1, 12)
-	}
-	if pos == 5 {
-		return parse_field(val, 1, 7)
-	}	
 
-	return Field{type_data:NOTHING}
-}
-
+//解析字段
+// 	NOTHING   = 0		//不匹配不执行
+// 	ANYTHING  = 1		//全匹配 "*"
+// 	NUM       = 2		//具体数字
+// 	RANGE     = 3		//范围
 func parse_field(val string, val1 int, val2 int ) Field{
 	if val == "*" {
 		return Field{type_data:ANYTHING}
 	} 
+
 	if strings.Contains(val, "/") == false && strings.Contains(val, "-") == false {
 		num, _ := strconv.Atoi(val)
 		return Field{type_data:NUM, num:num}
 	}else{
-		var range_str string
-		var step int
+		return parse_range(val, val1, val2)
+	}
 
-		args1 := strings.Split(val, "/")
-		if len(args1) == 1 {
-			range_str = args1[0]
-			step = 1
-		}else{
-			range_str = args1[0]
-			step, _ = strconv.Atoi(args1[1])
-		}
-		args2 := strings.Split(range_str, "-")
-		if len(args2) == 1 {
-			range_val := Range{first:val1, last:val2, step:step}
-			return Field{type_data:RANGE, range_val:range_val}
-		}else{
-			first, _ := strconv.Atoi(args2[0])
-			last, _ := strconv.Atoi(args2[1])
-			range_val := Range{first:first, last:last, step:step}
-			return Field{type_data:RANGE, range_val:range_val}
-		}
+	return Field{type_data:NOTHING}
+}
+
+//解析范围类型字段
+func parse_range(val string, val1 int, val2 int ) Field{
+	var range_str string
+	var step int
+
+	args1 := strings.Split(val, "/")
+	if len(args1) == 1 {
+		range_str = args1[0]
+		step = 1
+	}else{
+		range_str = args1[0]
+		step, _ = strconv.Atoi(args1[1])
+	}
+
+	args2 := strings.Split(range_str, "-")
+	if len(args2) == 1 {
+		range_val := Range{first:val1, last:val2, step:step}
+		return Field{type_data:RANGE, range_val:range_val}
+	}else{
+		first, _ := strconv.Atoi(args2[0])
+		last, _ := strconv.Atoi(args2[1])
+		range_val := Range{first:first, last:last, step:step}
+		return Field{type_data:RANGE, range_val:range_val}
 	}
 
 	return Field{type_data:NOTHING}
@@ -177,6 +176,7 @@ func timer_do(entrys []Entry) {
 	now_time := get_time()
     for _, entry := range entrys{
     	if can_run(entry, now_time) {
+    		Trace.Println("call func")
     		entry.DoFunc()
     	}
     }
